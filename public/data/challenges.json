@@ -13,7 +13,7 @@
     "place": "College Station, Texas",
     "description": "Bonnie invited Hiros and Miffians to her apartment for a jungle-themed night of dance, music, and alc! 💃🎶🍷\nWatch your back, buddy 🍌🐒"
   },
-    {
+  {
     "id": "cookies-accepted",
     "image": "images/cookies-accepted.jpg",
     "alt": "People making cookies",
@@ -27,7 +27,7 @@
     "place": "College Station, Texas",
     "description": "Miffians gathered at Ella's place for a cozy cookie-making session, karaoke, and movie night! 🎤🎥🍿\nCookies accepted! 🍪✅😋"
   },
-    {
+  {
     "id": "el-rey",
     "image": "images/el_rey.jpg",
     "alt": "The king hath arrived",
@@ -41,7 +41,7 @@
     "place": "Bryan, Texas",
     "description": "Fams toured the town fair at Bryan, sampling food, playing games and enjoying the moment! 😄🔥🥰"
   },
-    {
+  {
     "id": "good-bull",
     "image": "images/good_bull.jpg",
     "alt": "Three people holding up trophies",
@@ -55,7 +55,7 @@
     "place": "College Station, Texas",
     "description": "The Good Bull Icehouse hosted a back-to-school bingo and trivia night ⭕🙋‍♂️🙋‍♀️\nIn the end, Bonnie won a lego set, Audrey won some cool merch, and William won a $25 Starbucks Gift Card!!! 🧊😎☕🍀"
   },
-    {
+  {
     "id": "mj-who",
     "image": "images/mj_who.jpg",
     "alt": "A man in an MJ jacket",
@@ -68,5 +68,20 @@
     "lng": -96.3388499,
     "place": "College Station, Texas",
     "description": "The Chef of Miffy walked into the arena with sheer style - and walked out winning 3rd place for Miffy! 🍣🥉🐰\nGo get 'em Chef! 💎🕺👨‍🍳"
+  },
+  {
+    "id": "century-square",
+    "image": "images/cent8.jpg",
+    "alt": "Jongsuk with his candy",
+    "caption": "Show me da loot!",
+    "photoNote": "Looks sweet alright!",
+    "title": "Century Square Dinner Grab",
+    "category": "CSA · ",
+    "date": "2026-10-27T21:13:00",
+    "lat": 30.6253192,
+    "lng": -96.3397968,
+    "place": "College Station, Texas",
+    "description": "Miffy went for a Century Square food run! They enjoyed shrimp tacos, Italian, and of course, candy! 🌮🍝🍬\nThe shop, Hey Sugar, along with selling a variety of sweets, also brings back some vintage-style gum and soda. Bottoms up Justin! 🍻\n",
+    "active": true
   }
 ]
