@@ -83,5 +83,20 @@
     "place": "College Station, Texas",
     "description": "Miffy went for a Century Square food run! They enjoyed shrimp tacos, Italian, and of course, candy! 🌮🍝🍬\nThe shop, Hey Sugar, along with selling a variety of sweets, also brings back some vintage-style gum and soda. Bottoms up Justin! 🍻\n",
     "active": true
+  },
+  {
+    "id": "moto-moto",
+    "image": "images/mtmt37.jpg",
+    "alt": "White Lie: I don't want to kiss you right now",
+    "caption": "Dayum David...",
+    "photoNote": "Where you get so many kisses?!",
+    "title": "Miffy x Moto-Moto Kickback",
+    "category": "CSA · Miffy",
+    "date": "2026-11-06T23:06:00",
+    "lat": 30.590249,
+    "lng": -96.342743,
+    "place": "College Station, Texas",
+    "description": "Legendary mixer kickback with TASA's (Taiwanese-American Student Association) Moto-Moto Fam!!! 🐰🦛👪\nThe theme of the kickback is \"white lie\", as people are supposed to wear a crisp white T-shirt with a white lie written on it!\n😘🤥👕",
+    "active": true
   }
 ]
