@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { ArrowLeft, Check, ImagePlus, LockKeyhole, LogOut, Pencil, Plus, Save, Trash2, UploadCloud } from 'lucide-react'
 import type { Challenge } from './game'
+import LocationPicker from './LocationPicker'
 import './AdminPanel.css'
 
 const API = (import.meta.env.VITE_ADMIN_API_URL ?? '').trim().replace(/\/+$/, '')
@@ -15,12 +16,20 @@ async function imageBase64(file: File): Promise<string> {
 	})
 }
 
+function Thumb({ image, preview }: { image: string; preview?: string }) {
+	const name = image.slice('images/'.length)
+	const sources = [preview, `${API}/api/images/${name}`, `${import.meta.env.BASE_URL}${image}`].filter((source): source is string => Boolean(source))
+	const [failed, setFailed] = useState(0)
+	return <img src={sources[Math.min(failed, sources.length - 1)]} alt="" onError={() => setFailed((count) => count + 1)} />
+}
+
 export default function AdminConsole({ onExit, onSaved }: { onExit: () => void; onSaved: () => Promise<void> }) {
 	const [username, setUsername] = useState('MediaTeam')
 	const [password, setPassword] = useState('')
 	const [token, setToken] = useState('')
 	const [items, setItems] = useState<Challenge[]>([])
 	const [uploads, setUploads] = useState<Record<string, string>>({})
+	const [previews, setPreviews] = useState<Record<string, string>>({})
 	const [form, setForm] = useState<Challenge>(emptyChallenge)
 	const [editing, setEditing] = useState<string | null>(null)
 	const [adding, setAdding] = useState(false)
@@ -32,7 +41,7 @@ export default function AdminConsole({ onExit, onSaved }: { onExit: () => void; 
 
 	const call = async (path: string, init: RequestInit = {}, bearer = token) => {
 		const response = await fetch(`${API}${path}`, { ...init, headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}), ...init.headers } })
-		const result = await response.json().catch(() => ({})) as { error?: string; token?: string; challenges?: Challenge[]; saved?: { count: number } }
+		const result = await response.json().catch(() => ({})) as { error?: string; token?: string; challenges?: Challenge[]; saved?: { count: number; warning?: string } }
 		if (!response.ok) throw new Error(result.error || `Request failed (${response.status}).`)
 		return result
 	}
@@ -62,6 +71,7 @@ export default function AdminConsole({ onExit, onSaved }: { onExit: () => void; 
 		try {
 			const base64 = await imageBase64(file)
 			setUploads((current) => ({ ...current, [name]: base64 }))
+			setPreviews((current) => ({ ...current, [name]: `data:${ext === 'jpg' ? 'image/jpeg' : `image/${ext}`};base64,${base64}` }))
 			change('image', `images/${name}`)
 			setError(''); setNotice(`Selected ${name}; it will upload when the archive is published.`)
 		} catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not read that image.') }
@@ -72,8 +82,11 @@ export default function AdminConsole({ onExit, onSaved }: { onExit: () => void; 
 		const item = { ...form, id: form.id.trim().toLowerCase(), date: form.date.length === 16 ? `${form.date}:00` : form.date }
 		if (!item.id || items.some((existing) => existing.id === item.id && existing.id !== editing)) { setError('Enter a unique challenge ID.'); return }
 		if (!/^images\/[a-z0-9][a-z0-9._-]*\.(?:jpe?g|png|webp)$/i.test(item.image)) { setError('Choose an image or enter a valid images/ filename.'); return }
-		setItems((current) => adding ? [...current, item] : current.map((existing) => existing.id === editing ? item : existing))
-		setDirty(true); setEditing(null); setAdding(false); setForm(emptyChallenge()); setNotice('Draft updated. Select “Publish archive” to commit it.')
+		const nextItems = adding ? [...items, item] : items.map((existing) => existing.id === editing ? item : existing)
+		setItems(nextItems)
+		setEditing(null); setAdding(false); setForm(emptyChallenge())
+		if (nextItems.filter((entry) => entry.active !== false).length < 5) { setDirty(true); setNotice('Draft updated, but at least five active challenges are needed before it can go live.'); return }
+		void publish(nextItems)
 	}
 
 	const removeItem = (id: string) => {
@@ -84,17 +97,17 @@ export default function AdminConsole({ onExit, onSaved }: { onExit: () => void; 
 		setNotice('Removed from draft. Publish the archive to commit this change.')
 	}
 
-	const publish = async () => {
+	const publish = async (list: Challenge[] = items) => {
 		setBusy(true); setError(''); setNotice('')
 		try {
-			const referenced = new Set(items.map((item) => item.image.slice('images/'.length)))
+			const referenced = new Set(list.map((item) => item.image.slice('images/'.length)))
 			const pending = Object.entries(uploads).filter(([name]) => referenced.has(name)).map(([name, base64]) => ({ name, base64 }))
-			const result = await call('/api/admin/challenges', { method: 'PUT', body: JSON.stringify({ challenges: items, uploads: pending }) })
+			const result = await call('/api/admin/challenges', { method: 'PUT', body: JSON.stringify({ challenges: list, uploads: pending }) })
 			const latest = await call('/api/admin/challenges')
-			setItems(latest.challenges ?? items); setUploads({}); setDirty(false)
-			setNotice(`Published ${result.saved?.count ?? items.length} challenges to GitHub Pages.`)
+			setItems(latest.challenges ?? list); setUploads({}); setDirty(false)
+			setNotice(result.saved?.warning ?? `Published ${result.saved?.count ?? list.length} challenges. They are live in the game now.`)
 			await onSaved()
-		} catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not publish the archive.') }
+		} catch (reason) { setDirty(true); setError(reason instanceof Error ? reason.message : 'Could not publish the archive. Your changes are still drafts; try “Publish archive”.') }
 		finally { setBusy(false) }
 	}
 
@@ -109,9 +122,10 @@ export default function AdminConsole({ onExit, onSaved }: { onExit: () => void; 
 		{error && <div className="admin-alert admin-alert-error" role="alert">{error}</div>}{notice && <div className="admin-alert admin-alert-notice" role="status">{notice}</div>}
 		{!token ? <form className="admin-login-card" onSubmit={signIn}><div className="admin-card-top"><span>ADMIN SIGN IN</span><LockKeyhole size={17} /></div><h2>Welcome back.</h2><p>Sign in with your archive administrator credentials.</p><label className="admin-field"><span>USERNAME</span><input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label><label className="admin-field"><span>PASSWORD</span><input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label><button className="primary-button admin-submit" type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'} <ArrowLeft className="admin-enter-arrow" size={15} /></button><small>Password is sent only to the protected service and is never saved in this browser.</small></form>
 			: <div className="admin-workspace"><div className="admin-toolbar"><div><span className="admin-count">{String(items.length).padStart(2, '0')}</span><div><strong>Challenge archive</strong><small>{activeCount} active · at least 5 needed</small></div></div><div><button className="secondary-button" onClick={startAdd}><Plus size={15} /> Add challenge</button><button className="primary-button" onClick={() => void publish()} disabled={busy || !dirty || activeCount < 5}><Save size={15} /> {busy ? 'Publishing…' : 'Publish archive'}</button></div></div>
-				<div className="admin-content-grid"><div className="admin-challenge-list" aria-label="Challenges">{busy && !items.length ? <p className="admin-empty">Loading archive…</p> : items.map((item) => <article className={`admin-challenge-row ${editing === item.id ? 'is-selected' : ''}`} key={item.id}><img src={`${import.meta.env.BASE_URL}${item.image}`} alt="" /><div className="admin-row-copy"><strong>{item.title}</strong><span>{item.date.slice(0, 10)} · {item.place}</span><small>{item.id} · {item.active === false ? 'INACTIVE' : 'ACTIVE'}</small></div><button className="admin-icon-button" aria-label={`Edit ${item.title}`} onClick={() => startEdit(item)}><Pencil size={15} /></button><button className="admin-icon-button admin-delete-button" aria-label={`Remove ${item.title}`} onClick={() => removeItem(item.id)}><Trash2 size={15} /></button></article>)}{!items.length && !busy && <p className="admin-empty">No challenges found. Add one to begin.</p>}</div>
+				<div className="admin-content-grid"><div className="admin-challenge-list" aria-label="Challenges">{busy && !items.length ? <p className="admin-empty">Loading archive…</p> : items.map((item) => <article className={`admin-challenge-row ${editing === item.id ? 'is-selected' : ''}`} key={item.id}><Thumb key={item.image} image={item.image} preview={previews[item.image.slice('images/'.length)]} /><div className="admin-row-copy"><strong>{item.title}</strong><span>{item.date.slice(0, 10)} · {item.place}</span><small>{item.id} · {item.active === false ? 'INACTIVE' : 'ACTIVE'}</small></div><button className="admin-icon-button" aria-label={`Edit ${item.title}`} onClick={() => startEdit(item)}><Pencil size={15} /></button><button className="admin-icon-button admin-delete-button" aria-label={`Remove ${item.title}`} onClick={() => removeItem(item.id)}><Trash2 size={15} /></button></article>)}{!items.length && !busy && <p className="admin-empty">No challenges found. Add one to begin.</p>}</div>
 					{adding || editing ? <form className="admin-editor" onSubmit={applyForm}><div className="admin-editor-head"><div><span>{adding ? 'NEW ARCHIVE ENTRY' : 'EDIT ARCHIVE ENTRY'}</span><h2>{adding ? 'Add a moment.' : form.title || 'Edit moment.'}</h2></div><button type="button" className="admin-icon-button" aria-label="Close editor" onClick={() => { setAdding(false); setEditing(null); setForm(emptyChallenge()) }}>×</button></div>
-						<div className="admin-fields-grid">{field('CHALLENGE ID', 'id')}{field('TITLE', 'title')}{field('CATEGORY', 'category')}{field('DATE & TIME', 'date', 'datetime-local')}{field('PLACE', 'place')}{field('LATITUDE', 'lat', 'number')}{field('LONGITUDE', 'lng', 'number')}{field('CAPTION', 'caption')}{field('PHOTO NOTE', 'photoNote')}{field('ALT TEXT', 'alt')}{field('DESCRIPTION', 'description', 'text', true)}
+						<div className="admin-fields-grid">{field('CHALLENGE ID', 'id')}{field('TITLE', 'title')}{field('CATEGORY', 'category')}{field('DATE & TIME', 'date', 'datetime-local')}{field('PLACE', 'place')}{field('CAPTION', 'caption')}{field('PHOTO NOTE', 'photoNote')}{field('ALT TEXT', 'alt')}{field('DESCRIPTION', 'description', 'text', true)}
+													<LocationPicker key={editing ?? 'new'} lat={form.lat} lng={form.lng} onChange={(lat, lng) => setForm((current) => ({ ...current, lat, lng }))} />
 							<label className="admin-field admin-field-wide"><span>IMAGE FILE</span><div className="admin-upload"><input required value={form.image} onChange={(event) => change('image', event.target.value)} placeholder="images/event-photo.jpg" /><label className="admin-upload-button"><ImagePlus size={16} /> Choose image<input type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => void chooseImage(event.target.files?.[0])} /></label></div><small>JPG, PNG or WebP · up to 6 MB. Existing paths can be reused.</small></label>
 							<label className="admin-field admin-active-field"><input type="checkbox" checked={form.active !== false} onChange={(event) => change('active', event.target.checked)} /><span>Include in gameplay</span></label></div>
 						<div className="admin-editor-actions"><button type="button" className="secondary-button" onClick={() => { setAdding(false); setEditing(null); setForm(emptyChallenge()) }}>Cancel</button><button className="primary-button" type="submit"><Check size={15} /> Apply draft</button></div>

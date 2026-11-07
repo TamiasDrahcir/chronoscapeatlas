@@ -58,10 +58,22 @@ export function distanceKm(a: { lat: number; lng: number }, b: { lat: number; ln
   return 6371 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value))
 }
 
+const CAMPUS = { lat: 30.6188, lng: -96.3365 }
+const CAMPUS_WIDTH_KM = 5
+const AUSTIN = { lat: 30.2672, lng: -97.7431 }
+
+// Loss per km is 500 / zeroDistance. A target on campus hits zero after one campus width of error, and the
+// allowance grows with the log of the target's distance from campus, doubling (half the loss per km) at Austin.
+const LENIENCY_SCALE_KM = distanceKm(CAMPUS, AUSTIN) / (Math.E - 1)
+
+export function getZeroScoreDistanceKm(target: { lat: number; lng: number }): number {
+  return CAMPUS_WIDTH_KM * (1 + Math.log(1 + distanceKm(CAMPUS, target) / LENIENCY_SCALE_KM))
+}
+
 export function getRoundScore(challenge: Challenge, guess: Guess): Omit<RoundResult, 'secondsTaken'> {
   const distance = guess.location ? distanceKm(guess.location, { lat: challenge.lat, lng: challenge.lng }) : null
   const hours = guess.time ? Math.abs(guess.time.getTime() - new Date(challenge.date).getTime()) / 3600000 : null
-  const location = distance === null ? 0 : Math.round(500 * Math.max(0, 1 - distance / 2500))
+  const location = distance === null ? 0 : Math.round(500 * Math.max(0, 1 - distance / getZeroScoreDistanceKm(challenge)))
   const time = hours === null ? 0 : Math.round(500 * Math.max(0, 1 - hours / (24 * 14)))
   return { location, time, total: location + time, distance, hours }
 }

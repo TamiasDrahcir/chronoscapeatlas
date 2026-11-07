@@ -74,7 +74,13 @@ Deploy with `npx wrangler@4 deploy`. The configured admin username is `MediaTeam
 
 In the project root, create a local `.env` file (not committed) with `VITE_ADMIN_API_URL` set to the Worker URL printed by Wrangler, for example `https://chronoscapeatlas-admin-api.<your-account>.workers.dev`. Build and publish the site with `npm run deploy:pages`. The top-bar shield opens the admin screen. An administrator signs in, edits drafts, and selects **Publish archive**.
 
-The Worker requires the current `gh-pages` branch deployment configuration described above. Each publish commits the challenge JSON and any uploaded/deleted images to both branches; no GitHub Actions deployment is involved. Before later publishing from a local checkout, pull the latest `main` first so the local archive includes admin changes. If an update to one branch succeeds and the other fails, the API reports an error; retry the publish from the admin screen after the branch issue is corrected.
+### 4. Instant publishing with Workers KV
+
+The Worker stores the live archive (challenge JSON and photos) in a Workers KV namespace bound as `ARCHIVE` (declared in `admin-api/wrangler.toml`; Wrangler creates it on the first `npx wrangler@4 deploy`, or run `npx wrangler@4 kv namespace create ARCHIVE` and add the printed `id` to the binding). KV needs no payment method on the free tier. When the site is built with `VITE_ADMIN_API_URL`, the game loads challenges from `GET /api/challenges` and photos from `GET /api/images/<file>`, so a challenge is playable as soon as the admin form is submitted (KV can take up to about a minute to propagate worldwide). Submitting the form publishes immediately; deletions still use **Publish archive**.
+
+Every publish is also committed to `main` and `gh-pages` as a backup and as the fallback the game uses if the Worker is unreachable. Once KV holds an archive it is the source of truth: edit challenges through the admin screen rather than editing `public/data/challenges.json` by hand. Photos published before KV was enabled are served from the repository on demand.
+
+The Worker requires the current `gh-pages` branch deployment configuration described above. Each publish commits the challenge JSON and any uploaded/deleted images to both branches; no GitHub Actions deployment is involved. Before later publishing from a local checkout, pull the latest `main` first so the local archive includes admin changes. With KV enabled, a failed GitHub backup is reported as a warning while the change stays live; without KV, a failure on either branch is an error and you can retry from the admin screen.
 
 Images are limited to JPG, PNG, or WebP, at most 6 MB each and 24 MB total per save. Keep at least five active challenges. Admin sessions expire after four hours and are held only in browser memory.
 

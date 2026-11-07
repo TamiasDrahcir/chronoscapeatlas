@@ -6,6 +6,8 @@ const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const MAX_TOTAL_IMAGE_BYTES = 24 * 1024 * 1024
 const MAX_UPLOADS = 12
 const MAX_CHALLENGES = 500
+const KV_CHALLENGES_KEY = 'challenges'
+const KV_IMAGE_PREFIX = 'image:'
 const TOKEN_LIFETIME_SECONDS = 60 * 60 * 4
 
 function response(body, status, origin, env, extraHeaders = {}) {
@@ -208,14 +210,45 @@ async function commitBranch(env, branchName, mutations, message) {
   })
 }
 
+async function loadArchive(env) {
+  if (env.ARCHIVE) {
+    const stored = await env.ARCHIVE.get(KV_CHALLENGES_KEY, 'json')
+    if (Array.isArray(stored)) return stored
+  }
+  return loadSourceChallenges(env)
+}
+
+function contentTypeFor(name) {
+  const extension = name.split('.').pop().toLowerCase()
+  return extension === 'png' ? 'image/png' : extension === 'webp' ? 'image/webp' : 'image/jpeg'
+}
+
+async function serveImage(request, env, origin, name) {
+  let body = env.ARCHIVE ? await env.ARCHIVE.get(`${KV_IMAGE_PREFIX}${name}`, 'arrayBuffer') : null
+  if (!body) {
+    // Photos published before KV was enabled live only in the repository.
+    const upstream = await fetch(`https://raw.githubusercontent.com/${encodeURIComponent(env.GITHUB_OWNER)}/${encodeURIComponent(env.GITHUB_REPO)}/${encodeURIComponent(env.SOURCE_BRANCH || 'main')}/${IMAGE_PREFIX}${name}`)
+    if (!upstream.ok) return response({ error: 'Image not found.' }, 404, origin, env)
+    body = await upstream.arrayBuffer()
+  }
+  const headers = new Headers({ 'Content-Type': contentTypeFor(name), 'Cache-Control': 'public, max-age=60', 'X-Content-Type-Options': 'nosniff' })
+  const allowedOrigins = (env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).filter(Boolean)
+  if (origin && allowedOrigins.includes(origin)) {
+    headers.set('Access-Control-Allow-Origin', origin)
+    headers.set('Vary', 'Origin')
+  }
+  return new Response(request.method === 'HEAD' ? null : body, { status: 200, headers })
+}
+
 async function saveArchive(env, submitted) {
   const challenges = submitted?.challenges
   const referencedImages = validateChallenges(challenges)
-  const oldChallenges = await loadSourceChallenges(env)
+  const oldChallenges = await loadArchive(env)
   const oldImageNames = new Set(oldChallenges.filter((row) => typeof row?.image === 'string' && row.image.startsWith('images/')).map((row) => row.image.slice('images/'.length)))
   const uploads = submitted?.uploads
   if (!Array.isArray(uploads) || uploads.length > MAX_UPLOADS) throw new Error(`Upload no more than ${MAX_UPLOADS} images per save.`)
   const uploadByName = new Map()
+  const uploadBytes = new Map()
   let totalBytes = 0
   for (const upload of uploads) {
     if (!upload || typeof upload.name !== 'string' || !/^[a-z0-9][a-z0-9._-]{0,159}\.(?:jpe?g|png|webp)$/i.test(upload.name)) throw new Error('Image filenames may contain only letters, numbers, dots, underscores, and hyphens, with a JPG, PNG, or WebP extension.')
@@ -225,6 +258,7 @@ async function saveArchive(env, submitted) {
     if (totalBytes > MAX_TOTAL_IMAGE_BYTES) throw new Error('The total image upload per save must be 24 MB or smaller.')
     if (!isAllowedImage(bytes, upload.name)) throw new Error(`Image “${upload.name}” does not match its file extension or is not a supported image.`)
     uploadByName.set(upload.name, upload.base64)
+    uploadBytes.set(upload.name, bytes)
   }
   for (const name of referencedImages) {
     if (!oldImageNames.has(name) && !uploadByName.has(name)) throw new Error(`Upload “${name}” before referencing it in a challenge.`)
@@ -246,9 +280,22 @@ async function saveArchive(env, submitted) {
     pagesMutations.push({ path: `${PAGES_IMAGE_PREFIX}${name}`, remove: true })
   }
   const timestamp = new Date().toISOString().slice(0, 10)
-  await commitBranch(env, env.SOURCE_BRANCH || 'main', sourceMutations, `Admin: update challenge archive (${timestamp})`)
-  await commitBranch(env, env.PAGES_BRANCH || 'gh-pages', pagesMutations, `Admin: publish challenge archive (${timestamp})`)
-  return { count: challenges.length, uploaded: uploadByName.size, removedImages: deletedImages.length }
+  if (env.ARCHIVE) {
+    // Photos first, so the live JSON never references a missing image.
+    for (const [name, bytes] of uploadBytes) await env.ARCHIVE.put(`${KV_IMAGE_PREFIX}${name}`, bytes)
+    await env.ARCHIVE.put(KV_CHALLENGES_KEY, jsonContent)
+    for (const name of deletedImages) await env.ARCHIVE.delete(`${KV_IMAGE_PREFIX}${name}`)
+  }
+  const result = { count: challenges.length, uploaded: uploadByName.size, removedImages: deletedImages.length }
+  try {
+    await commitBranch(env, env.SOURCE_BRANCH || 'main', sourceMutations, `Admin: update challenge archive (${timestamp})`)
+    await commitBranch(env, env.PAGES_BRANCH || 'gh-pages', pagesMutations, `Admin: publish challenge archive (${timestamp})`)
+  } catch (error) {
+    // With KV the archive is already live; a failed repository backup must not hide that.
+    if (!env.ARCHIVE) throw error
+    result.warning = `Live now, but the GitHub backup failed: ${error instanceof Error ? error.message : 'unknown error'}`
+  }
+  return result
 }
 
 export default {
@@ -268,6 +315,19 @@ export default {
     }
     if (origin && !(env.ALLOWED_ORIGINS || '').split(',').map((value) => value.trim()).includes(origin)) {
       return response({ error: 'Origin not allowed.' }, 403, '', env)
+    }
+
+    if ((request.method === 'GET' || request.method === 'HEAD') && path === '/api/challenges') {
+      const stored = env.ARCHIVE ? await env.ARCHIVE.get(KV_CHALLENGES_KEY, 'json') : null
+      return response({ challenges: Array.isArray(stored) ? stored : null }, 200, origin, env)
+    }
+    const imageMatch = /^\/api\/images\/([a-z0-9][a-z0-9._-]{0,159}\.(?:jpe?g|png|webp))$/i.exec(path)
+    if ((request.method === 'GET' || request.method === 'HEAD') && imageMatch) {
+      try {
+        return await serveImage(request, env, origin, imageMatch[1])
+      } catch {
+        return response({ error: 'Could not load that image.' }, 502, origin, env)
+      }
     }
     if (!env.ADMIN_USERNAME || !env.ADMIN_PASSWORD || env.ADMIN_PASSWORD.length < 16 || !env.ADMIN_SESSION_SECRET || env.ADMIN_SESSION_SECRET.length < 32 || !env.GITHUB_TOKEN || !env.GITHUB_OWNER || !env.GITHUB_REPO) {
       return response({ error: 'Admin API is not fully configured.' }, 503, origin, env)
@@ -292,7 +352,7 @@ export default {
     if (request.method === 'GET' && path === '/api/admin/challenges') {
       if (!await verifyToken(getBearerToken(request), env)) return response({ error: 'Admin session expired. Please sign in again.' }, 401, origin, env)
       try {
-        return response({ challenges: await loadSourceChallenges(env) }, 200, origin, env)
+        return response({ challenges: await loadArchive(env) }, 200, origin, env)
       } catch (error) {
         return response({ error: error instanceof Error ? error.message : 'Could not load challenges.' }, 502, origin, env)
       }

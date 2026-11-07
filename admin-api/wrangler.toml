@@ -11,6 +11,10 @@ SOURCE_BRANCH = "main"
 PAGES_BRANCH = "gh-pages"
 ALLOWED_ORIGINS = "https://tamiasdrahcir.github.io,http://localhost:5173"
 
+# Wrangler creates this KV namespace on first deploy and stores the live archive in it.
+[[kv_namespaces]]
+binding = "ARCHIVE"
+
 [[ratelimits]]
 name = "LOGIN_LIMITER"
 namespace_id = "1001"
